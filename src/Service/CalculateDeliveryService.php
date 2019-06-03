@@ -60,27 +60,17 @@ class CalculateDeliveryService
             return ['Error' => 'A delivery time could not be calculated. Please check your request parameters.'];
         }
 
-        if ($request['time'] < $deliveryData['endTime']) {
-            $deliveryStartDay = $deliveryData['deliveryDay'];
-        } else {
-            $deliveryStartDay = $deliveryData['deliveryDay'] === max($deliveryData['supplierDeliveryDays'])
-                ? min($deliveryData['supplierDeliveryDays'])
-                : $deliveryData['deliveryDay']++;
-        }
-
         $deliveryStartDate = date(
             'd-m-Y',
-            strtotime('next ' . $this->weekDays[$deliveryStartDay])
+            strtotime('next ' . $this->weekDays[$deliveryData['deliveryDay']])
         );
 
-        $i = 1;
         $daysToDelivery = $deliveryData['daysToDeliver'];
-        while ($i <= $deliveryData['daysToDeliver']) {
-            $nextDay = date('N', strtotime($deliveryStartDate . '+ ' . $i . ' day'));
-            if (!in_array($nextDay, $deliveryData['supplierDeliveryDays'])) {
+        for ($i = 0; $i <= $daysToDelivery; $i++) {
+            $deliveryDayToCheck = date('N', strtotime($deliveryStartDate . '+ ' . $i . ' day'));
+            if (!in_array($deliveryDayToCheck, $deliveryData['supplierDeliveryDays'])) {
                 $daysToDelivery++;
             }
-            $i++;
         }
 
         return [
@@ -98,6 +88,7 @@ class CalculateDeliveryService
         $requestSupplier = (int) $request['supplier'] ?? 0;
         $requestDay = (int) $request['day'] ?? 0;
         $requestLocation = (int) $request['location'] ?? 0;
+        $requestTime = $request['time'] ?? 0;
 
         $shippingPeriods = $this->shippingPeriodRepository->getShippingPeriods(
             [
@@ -120,18 +111,30 @@ class CalculateDeliveryService
             return [];
         }
 
+        $nextIterationIsValue = false;
         /** @var ShippingPeriod $period */
-        foreach ($shippingPeriods as $period) {
-            $supplierDeliveryDays[] = $period->getDeliveryDay();
-            if ($requestDay === $period->getDeliveryDay()) {
+        foreach ($shippingPeriods as $id => $period) {
+            $supplierDeliveryDays[$id] = $period->getDeliveryDay();
+
+            if ($nextIterationIsValue) {
                 $shippingPeriod = $period;
+                $nextIterationIsValue = false;
+            }
+            if ($requestDay === $period->getDeliveryDay()) {
+                if (strtotime($requestTime) < strtotime($period->getEndTime()->format('H:i:s'))) {
+                    $shippingPeriod = $period;
+                } elseif ($requestDay === max($shippingPeriods)->getDeliveryDay()) {
+                    $shippingPeriod = min($shippingPeriods);
+                } else {
+                    $nextIterationIsValue = true;
+                }
             }
         }
 
         return [
             'startTime' => $shippingPeriod->getStartTime()->format('H:i:s'),
             'endTime' => $shippingPeriod->getEndTime()->format('H:i:s'),
-            'deliveryDay' => $requestDay,
+            'deliveryDay' => $shippingPeriod->getDeliveryDay(),
             'daysToDeliver' => $deliveryTime->getDaysToDeliver(),
             'supplierDeliveryDays' => $supplierDeliveryDays,
         ];
